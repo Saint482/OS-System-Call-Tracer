@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>System Call Tracer — Demo</title>
+<style>
+:root{
+  --bg:#f4f4f2; --fg:#1a1a1a; --muted:#6b6b6b; --card:#ffffff; --border:#dcdcd8;
+  --accent:#0f6b5c; --accent2:#b3401f; --term-bg:#111417; --term-fg:#d6e2e0; --term-dim:#6f7b7a;
+  --chip:#eef1ef; --err:#c53d2a;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#15181a; --fg:#eef0ee; --muted:#9aa3a1; --card:#1d2124; --border:#30363a;
+    --chip:#262b2e;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#15181a; --fg:#eef0ee; --muted:#9aa3a1; --card:#1d2124; --border:#30363a; --chip:#262b2e;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px);}
+*{box-sizing:border-box;}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+  min-height:100%;
+}
+.wrap{max-width:880px;margin:0 auto;padding:28px 18px 60px;}
+header{margin-bottom:22px;}
+h1{font-size:1.5rem;margin:0 0 6px;letter-spacing:-0.02em;}
+.sub{color:var(--muted);font-size:.92rem;line-height:1.5;margin:0 0 10px;}
+.note{
+  font-size:.8rem;color:var(--muted);background:var(--chip);border:1px solid var(--border);
+  border-radius:8px;padding:8px 12px;line-height:1.5;
+}
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 14px;}
+.tab{
+  border:1px solid var(--border);background:var(--card);color:var(--fg);
+  padding:8px 13px;border-radius:20px;font-size:.85rem;cursor:pointer;
+  transition:.15s;
+}
+.tab:hover{border-color:var(--accent);}
+.tab.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+.controls{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;}
+button.run{
+  background:var(--accent);color:#fff;border:none;padding:9px 18px;border-radius:8px;
+  font-size:.88rem;cursor:pointer;font-weight:600;
+}
+button.run:active{transform:scale(.97);}
+button.skip{
+  background:none;border:1px solid var(--border);color:var(--muted);padding:9px 14px;
+  border-radius:8px;font-size:.82rem;cursor:pointer;
+}
+.term{
+  background:var(--term-bg);color:var(--term-fg);border-radius:10px;padding:16px 16px 18px;
+  font-family:ui-monospace,'SFMono-Regular',Consolas,'Liberation Mono',monospace;
+  font-size:.78rem;line-height:1.65;overflow-x:auto;min-height:120px;
+  box-shadow:0 6px 20px rgba(0,0,0,.15);
+}
+.term .l{white-space:pre;opacity:0;animation:fade .25s forwards;}
+.term .l.dim{color:var(--term-dim);font-style:italic;}
+.term .l.err{color:#ff8a72;}
+.term .prompt{color:#7fd4b0;}
+@keyframes fade{to{opacity:1;}}
+.cursor{display:inline-block;width:7px;height:13px;background:var(--term-fg);vertical-align:-2px;animation:blink 1s step-end infinite;}
+@keyframes blink{50%{opacity:0;}}
+.summary{display:none;margin-top:18px;}
+.summary.show{display:block;}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
+@media (max-width:560px){.grid{grid-template-columns:1fr;}}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;}
+.card h3{margin:0 0 10px;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);}
+table{width:100%;border-collapse:collapse;font-size:.82rem;}
+td,th{text-align:left;padding:3px 4px;}
+th{color:var(--muted);font-weight:500;border-bottom:1px solid var(--border);}
+td.num,th.num{text-align:right;}
+.bar-row{display:flex;align-items:center;gap:8px;margin:7px 0;font-size:.8rem;}
+.bar-label{width:64px;flex-shrink:0;color:var(--muted);}
+.bar-track{flex:1;background:var(--chip);border-radius:5px;height:9px;overflow:hidden;}
+.bar-fill{height:100%;background:var(--accent);border-radius:5px;}
+.bar-pct{width:42px;text-align:right;flex-shrink:0;}
+.verdict{
+  display:inline-block;padding:5px 12px;border-radius:6px;font-weight:700;font-size:.9rem;
+  background:var(--chip);border:1px solid var(--border);
+}
+.stat-row{display:flex;justify-content:space-between;font-size:.82rem;padding:3px 0;color:var(--muted);}
+.stat-row b{color:var(--fg);font-weight:600;}
+.viewsw{display:flex;gap:8px;margin-bottom:18px;}
+.vbtn{
+  flex:1;border:1px solid var(--border);background:var(--card);color:var(--fg);
+  padding:10px;border-radius:9px;font-size:.88rem;font-weight:600;cursor:pointer;text-align:center;
+}
+.vbtn.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+#view-code{display:none;}
+#view-code.show{display:block;}
+.code-layout{display:flex;gap:14px;}
+@media (max-width:620px){.code-layout{flex-direction:column;}}
+.code-side{width:190px;flex-shrink:0;display:flex;flex-direction:column;gap:5px;}
+@media (max-width:620px){.code-side{width:100%;flex-direction:row;flex-wrap:wrap;}}
+.code-tab{
+  text-align:left;background:var(--card);border:1px solid var(--border);border-radius:7px;
+  padding:7px 10px;font-size:.78rem;cursor:pointer;color:var(--muted);
+}
+.code-tab.active{border-color:var(--accent);color:var(--accent);font-weight:600;background:var(--chip);}
+.code-pane{flex:1;min-width:0;background:var(--term-bg);border-radius:10px;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,.15);}
+.code-file{
+  display:flex;justify-content:space-between;align-items:center;padding:9px 14px;
+  border-bottom:1px solid #2a2f32;color:var(--term-dim);font-size:.75rem;font-family:ui-monospace,monospace;
+}
+.code-scroll{overflow-x:auto;max-height:480px;overflow-y:auto;}
+.code-pre{margin:0;padding:10px 0;font-family:ui-monospace,'SFMono-Regular',Consolas,monospace;font-size:.76rem;line-height:1.6;}
+.cl{display:flex;}
+.cl .ln{width:38px;flex-shrink:0;text-align:right;padding-right:10px;color:#4b5457;user-select:none;}
+.cl .code{white-space:pre;color:var(--term-fg);}
+.tok-c{color:#7b8a87;font-style:italic;}
+.tok-s{color:#9ec97f;}
+.tok-k{color:#e8a765;}
+.tok-p{color:#6fb3d2;}
+.code-note{font-size:.75rem;color:var(--muted);margin-top:10px;line-height:1.5;}
+.alerts{margin-top:14px;}
+.alert-item{
+  background:#fdeceaee;border:1px solid var(--err);color:var(--err);border-radius:8px;
+  padding:9px 12px;font-size:.82rem;margin-bottom:7px;font-family:ui-monospace,monospace;
+}
+:root[data-theme="dark"] .alert-item,
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .alert-item{background:#3a1f1c;}}
+.no-alert{color:var(--muted);font-size:.85rem;}
+footer{margin-top:30px;font-size:.75rem;color:var(--muted);text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>🔍 System Call Tracer — Demo</h1>
+  <p class="sub">เครื่องมือดักและวิเคราะห์ system call ของโปรแกรมบน Linux x86_64 ด้วย <code>ptrace</code> — โปรเจกต์วิชา Operating Systems</p>
+  <p class="note">หน้านี้เล่นย้อนผลการรันจริงจากเครื่อง (Linux/WSL2) เพราะ <code>ptrace</code> ต้องอาศัย Linux kernel ทำงานจริง จึงรันสดในเบราว์เซอร์ไม่ได้ — log และตัวเลขทั้งหมดคือข้อมูลจริงจากการทดสอบ ไม่ใช่ค่าจำลอง</p>
+</header>
+
+<div class="viewsw">
+  <div class="vbtn active" id="swDemo">🎬 Demo</div>
+  <div class="vbtn" id="swCode">📄 View Code</div>
+</div>
+
+<div id="view-demo">
+<div class="tabs" id="tabs"></div>
+<div class="controls">
+  <button class="run" id="runBtn">▶ รัน tracer</button>
+  <button class="skip" id="skipBtn">แสดงผลทันที</button>
+</div>
+
+<div class="term" id="term"></div>
+
+<div class="summary" id="summary">
+  <div class="grid">
+    <div class="card">
+      <h3>Syscall Summary</h3>
+      <table id="tbl"></table>
+    </div>
+    <div class="card">
+      <h3>แยกตามประเภท</h3>
+      <div id="cats"></div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:14px">
+    <h3>การจำแนก workload</h3>
+    <div class="verdict" id="verdict"></div>
+    <div style="margin-top:10px">
+      <div class="stat-row"><span>wall time</span><b id="s-wall"></b></div>
+      <div class="stat-row"><span>เวลาใน syscall</span><b id="s-time"></b></div>
+      <div class="stat-row"><span>syscall / วินาที</span><b id="s-rate"></b></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Alerts</h3>
+    <div class="alerts" id="alerts"></div>
+  </div>
+</div>
+</div>
+
+<div id="view-code">
+  <div class="code-layout">
+    <div class="code-side" id="codeSide"></div>
+    <div class="code-pane">
+      <div class="code-file"><span>tracer.c</span><span id="codeMeta"></span></div>
+      <div class="code-scroll"><pre class="code-pre" id="codeBody"></pre></div>
+    </div>
+  </div>
+  <p class="code-note">ไฟล์จริงมี 674 บรรทัด — ที่แสดงคือฟังก์ชันหลักของแต่ละ Phase ที่คุยกันไว้ (core ptrace loop, decode argument, การแจ้งเตือน) ไฟล์เต็มอยู่ใน tracer.c ที่ส่งให้ก่อนหน้านี้แล้ว</p>
+</div>
+
+<footer>System Call Tracer · ptrace · Linux x86_64 · ข้อมูลจากผลทดสอบจริงบน WSL2 (kernel 6.18.33.2)</footer>
+</div>
+
+<script>
+const D = "dim", E = "err";
+const tests = {
+  io: { name: "test_io", desc:"file I/O — write/read/close/unlink",
+    log: [
+      ['execve("./test_io", argv, envp) = 0'],
+      ['# ... syscall ของ dynamic loader: brk, mmap, openat("/etc/ld.so.cache"), openat("libc.so.6"), mprotect ฯลฯ — ย่อไว้ ~24 บรรทัด ...', D],
+      ['openat(AT_FDCWD, "test.txt", O_WRONLY|O_CREAT|O_TRUNC, 0644) = 3'],
+      ['write(3, "hello world\\n", 12) = 12'],
+      ['write(3, "hello world\\n", 12) = 12'],
+      ['# ... write() ซ้ำแบบเดิมอีก 48 ครั้ง (รวม 51 ครั้ง) ...', D],
+      ['close(3) = 0'],
+      ['openat(AT_FDCWD, "test.txt", O_RDONLY) = 3'],
+      ['read(3, "hello world\\nhello world\\nhello wo"..., 64) = 64'],
+      ['# ... read() อีก 9 ครั้งจนอ่านหมดไฟล์ ...', D],
+      ['close(3) = 0'],
+      ['unlink("test.txt") = 0'],
+      ['write(1, "done\\n", 5) = 5'],
+      ['exit_group(0) = ?'],
+      ['+++ exited with 0 +++'],
+    ],
+    table:[["write",51,0,"55.83%"],["openat",4,0,"26.71%"],["read",12,0,"5.29%"],["execve",1,0,"3.92%"],["unlink",1,0,"2.64%"],["close",4,0,"1.94%"]],
+    totalCalls:101, totalErrors:1,
+    cats:[["file I/O",96.8],["memory",2.4],["other",0.7],["process",0.0]],
+    verdict:"I/O-bound", wall:"0.046544s", time:"0.037323s (80.2%)", rate:"2149 /s"
+  },
+  cpu: { name:"test_cpu", desc:"คำนวณวนลูปหนัก แทบไม่มี I/O",
+    log:[
+      ['execve("./test_cpu", argv, envp) = 0'],
+      ['# ... syscall ของ dynamic loader (เหมือนด้านบน) ...', D],
+      ['# ... จากนี้โปรแกรมวนคำนวณ ~4×10^8 รอบใน user space — ptrace มองไม่เห็นส่วนนี้เลย เพราะไม่มีการเรียก syscall ...', D],
+      ['write(1, "result=5773481563728025088\\n", 27) = 27'],
+      ['exit_group(0) = ?'],
+      ['+++ exited with 0 +++'],
+    ],
+    table:[["execve",1,0,"52.13%"],["mmap",8,0,"12.78%"],["mprotect",3,0,"4.80%"],["fstat",3,0,"4.01%"],["brk",3,0,"3.90%"],["openat",2,0,"2.90%"]],
+    totalCalls:35, totalErrors:1,
+    cats:[["memory",48.9],["file I/O",34.5],["other",16.6],["process",0.0]],
+    verdict:"CPU-bound", wall:"0.667737s", time:"0.001464s (0.2%)", rate:"51 /s"
+  },
+  fork: { name:"test_fork", desc:"clone + wait4 (ไม่ใช้ -f จึงเห็นแค่ฝั่งพ่อ)",
+    log:[
+      ['execve("./test_fork", argv, envp) = 0'],
+      ['# ... syscall ของ dynamic loader ...', D],
+      ['clone(0x1200011, 0x0, NULL, ..., 0x0) = 2929'],
+      ['wait4(2929, 0x7ffeb3db2f20, 0x0, NULL) = 2929'],
+      ['--- Child exited ---'],
+      ['write(1, "parent: child exited 3\\n", 23) = 23'],
+      ['exit_group(0) = ?'],
+      ['+++ exited with 0 +++'],
+      ['# หมายเหตุ: รอบนี้ไม่ได้เปิด -f จึง trace แค่ process พ่อ ไม่เห็น syscall ของลูกเลย (ดูแท็บ "fork -f")', D],
+    ],
+    table:[["execve",1,0,"45.90%"],["mmap",8,0,"12.13%"],["clone",1,0,"5.54%"],["mprotect",3,0,"4.73%"],["wait4",1,0,"3.54%"],["fstat",3,0,"3.50%"]],
+    totalCalls:37, totalErrors:1,
+    cats:[["memory",40.4],["file I/O",29.9],["process",16.8],["other",12.9]],
+    verdict:"Mixed / waiting-bound", wall:"0.006542s", time:"0.001754s (26.8%)", rate:"5503 /s"
+  },
+  forkf: { name:"test_fork -f", desc:"ตาม process ลูกด้วย -f เห็น syscall ทั้งพ่อและลูก",
+    log:[
+      ['[pid 1639] execve("./test_fork", argv, envp) = 0'],
+      ['# ... syscall ของ dynamic loader ฝั่งพ่อ ...', D],
+      ['[pid 1639] clone(0x1200011, 0x0, NULL, ..., 0x0) = 1640'],
+      ['[pid 1640] set_robust_list(0x7df9ee54aa20, 24) = 0'],
+      ['[pid 1640] getpid() = 1640'],
+      ['# ... syscall อื่นของลูก: fstat, getrandom, brk ...', D],
+      ['[pid 1640] write(1, "child pid=1640\\n", 15) = 15'],
+      ['[pid 1640] exit_group(3) = ?'],
+      ['[pid 1640] +++ exited with 3 +++'],
+      ['[pid 1639] wait4(1640, 0x7ffe629a1f70, 0x0, NULL) = 1640'],
+      ['[pid 1639] --- Child exited ---'],
+      ['[pid 1639] write(1, "parent: child exited 3\\n", 23) = 23'],
+      ['[pid 1639] exit_group(0) = ?'],
+      ['[pid 1639] +++ exited with 0 +++'],
+    ],
+    table:[["execve",1,0,"48.13%"],["wait4",1,0,"14.69%"],["mmap",8,0,"6.47%"],["clone",1,0,"5.31%"],["brk",5,0,"3.16%"],["mprotect",3,0,"3.11%"]],
+    totalCalls:45, totalErrors:1,
+    cats:[["process",39.9],["memory",26.7],["file I/O",22.5],["other",10.9]],
+    verdict:"Mixed / waiting-bound", wall:"0.014609s", time:"0.004639s (31.8%)", rate:"3012 /s"
+  },
+  susp: { name:"test_suspicious", desc:"เข้าถึงไฟล์อ่อนไหว, connect, exec โปรแกรมอื่น",
+    log:[
+      ['execve("./test_suspicious", argv, envp) = 0'],
+      ['# ... syscall ของ dynamic loader ...', D],
+      ['openat(AT_FDCWD, "/etc/shadow", O_RDONLY) = -1 EACCES (Permission denied)', E],
+      ['openat(AT_FDCWD, "/etc/shadow", O_RDONLY) = -1 EACCES (Permission denied)', E],
+      ['# ... เข้าถึง /etc/shadow ซ้ำอีก 2 ครั้ง (รวม 4 ครั้ง) ...', D],
+      ['openat(AT_FDCWD, "/nonexistent/file", O_RDONLY) = -1 ENOENT (No such file or directory)', E],
+      ['socket(2, 1, 0) = 3'],
+      ['connect(3, {sa_family=AF_INET, ...}, 16) = -1 ECONNREFUSED (Connection refused)', E],
+      ['close(3) = 0'],
+      ['execve("/bin/echo", argv, envp) = 0'],
+      ['# ... /bin/echo โหลด dynamic library และค้นหาไฟล์ locale (openat หลายสิบครั้ง) — ย่อไว้ ...', D],
+      ['write(1, "spawned\\n", 8) = 8'],
+      ['close(1) = 0'],
+      ['close(2) = 0'],
+      ['exit_group(0) = ?'],
+      ['+++ exited with 0 +++'],
+    ],
+    table:[["execve",2,0,"25.78%"],["openat",37,18,"19.78%"],["mmap",29,0,"16.50%"],["close",22,0,"9.64%"],["fstat",20,0,"8.11%"],["mprotect",6,0,"3.25%"]],
+    totalCalls:148, totalErrors:21,
+    cats:[["file I/O",49.5],["memory",26.2],["process",13.7],["network",4.4],["other",6.3]],
+    verdict:"I/O-bound", wall:"0.020082s", time:"0.008269s (41.2%)", rate:"7320 /s",
+    alerts:[
+      "[!] เข้าถึงไฟล์อ่อนไหว: /etc/shadow (pid 5096)",
+      "[!] Permission denied ซ้ำ >= 3 ครั้ง (อาจพยายามเข้าถึงสิ่งที่ไม่มีสิทธิ์)",
+      "[!] พยายามเชื่อมต่อ network (connect) (pid 5096)",
+      "[!] exec โปรแกรมอื่นระหว่างรัน: /bin/echo (pid 5096)",
+    ]
+  },
+};
+
+const codeSections = [
+ { name:"syscall table[]", meta:"บรรทัด 47–58 (ย่อ)", code:
+`struct sc_info { const char *name; const char *args; int cat; };
+
+#define S(nr, n, a, c) [nr] = { n, a, c }
+static const struct sc_info table[MAXNR] = {
+    /* file I/O */
+    S(SYS_read, "read", "dru", C_FILE),
+    S(SYS_write, "write", "dwu", C_FILE),
+    S(SYS_open, "open", "sfm", C_FILE),
+    S(SYS_openat, "openat", "Dsfm", C_FILE),
+    S(SYS_close, "close", "d", C_FILE),
+    S(SYS_stat, "stat", "sp", C_FILE),
+    S(SYS_fstat, "fstat", "dp", C_FILE),
+    // ... อีก ~90 รายการ: socket, connect, execve, clone, ptrace ฯลฯ` },
+
+ { name:"errname()", meta:"บรรทัด 154–167", code:
+`static const char *errname(int e)
+{
+    switch (e) {
+#define E(x) case x: return #x;
+    E(EPERM) E(ENOENT) E(ESRCH) E(EINTR) E(EIO) E(ENXIO) E(E2BIG) E(ENOEXEC)
+    E(EBADF) E(ECHILD) E(EAGAIN) E(ENOMEM) E(EACCES) E(EFAULT) E(EBUSY)
+    E(EEXIST) E(ENOTDIR) E(EISDIR) E(EINVAL) E(ENFILE) E(EMFILE) E(ENOTTY)
+    E(EFBIG) E(ENOSPC) E(ESPIPE) E(EROFS) E(EPIPE) E(ERANGE) E(ENOSYS)
+    E(ENOTEMPTY) E(ECONNREFUSED) E(ETIMEDOUT) E(ENOTSOCK) E(EADDRINUSE)
+#undef E
+    default: return "E?";
+    }
+}` },
+
+ { name:"on_entry()", meta:"บรรทัด 501–523 — Phase 3", code:
+`static void on_entry(struct proc *p)
+{
+    struct user_regs_struct r;
+    if (ptrace(PTRACE_GETREGS, p->pid, NULL, &r) < 0) return;
+    p->entry = r;
+    clock_gettime(CLOCK_MONOTONIC, &p->t0);
+    p->path[0] = '\\0';
+    free(p->argstr);
+    p->argstr = NULL;
+
+    /* format argument ตอน entry เพราะ memory (เช่น path ของ execve) จะหายหลัง exec */
+    size_t len;
+    FILE *f = open_memstream(&p->argstr, &len);
+    if (f) { format_args(f, p->pid, &r, 0, 0, p->path); fclose(f); }
+
+    long nr = (long)r.orig_rax;
+    if (nr == SYS_exit || nr == SYS_exit_group) {   /* ไม่มี syscall-exit stop */
+        log_line(p, nr, p->argstr ? p->argstr : "", "?");
+        account(nr, 0, 0);
+        return;
+    }
+    p->in_syscall = 1;
+}` },
+
+ { name:"on_exit_stop()", meta:"บรรทัด 525–561 — Phase 3/4", code:
+`static void on_exit_stop(struct proc *p)
+{
+    struct user_regs_struct r;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    p->in_syscall = 0;
+    if (ptrace(PTRACE_GETREGS, p->pid, NULL, &r) < 0) return;
+
+    long nr = (long)p->entry.orig_rax;
+    long ret = (long)r.rax;
+    int is_err = (ret < 0 && ret >= -4095 && -ret < 512);
+
+    /* read/recv: buffer เพิ่งถูกเติมตอน exit จึง format ใหม่ */
+    if (nr >= 0 && nr < MAXNR && table[nr].name && strchr(table[nr].args, 'r') && ret > 0) {
+        size_t len;
+        char *s = NULL;
+        FILE *f = open_memstream(&s, &len);
+        if (f) {
+            format_args(f, p->pid, &p->entry, ret, 1, NULL);
+            fclose(f);
+            free(p->argstr);
+            p->argstr = s;
+        }
+    }
+
+    char rb[160];
+    format_ret(rb, sizeof rb, nr, ret);
+    log_line(p, nr, p->argstr ? p->argstr : "", rb);
+    double dt = elapsed(&p->t0, &now);
+    account(nr, dt, is_err);
+    if (nr == SYS_execve && ret == 0 && !startup_exec_seen) {
+        startup_exec_seen = 1;      /* execve ตัวแรก = ตอนเปิดโปรแกรม ไม่ใช่พฤติกรรมของโปรแกรม */
+        startup_exec_time = dt;
+    }
+    check_alerts(p, nr, ret);
+}` },
+
+ { name:"check_alerts()", meta:"บรรทัด 397–416 — Phase 4", code:
+`static void check_alerts(struct proc *p, long nr, long ret)
+{
+    const char *path = p->path;
+    if (path[0] &&
+        (!strncmp(path, "/etc/shadow", 11) || !strncmp(path, "/etc/passwd", 11) ||
+         strstr(path, "/.ssh/") || (strstr(path, "/proc/") && strstr(path, "/mem"))))
+        add_alert("เข้าถึงไฟล์อ่อนไหว: %s (pid %d)", path, p->pid);
+
+    if (ret == -EACCES || ret == -EPERM) {
+        if (++perm_denied == 3)
+            add_alert("Permission denied ซ้ำ >= 3 ครั้ง (อาจพยายามเข้าถึงสิ่งที่ไม่มีสิทธิ์)");
+    }
+    if (nr == SYS_execve && ret == 0 && ++exec_count > 1)
+        add_alert("exec โปรแกรมอื่นระหว่างรัน: %s (pid %d)", path, p->pid);
+    if (nr == SYS_connect)
+        add_alert("พยายามเชื่อมต่อ network (connect) (pid %d)", p->pid);
+    if (nr == SYS_ptrace)
+        add_alert("เรียก ptrace เอง (อาจเป็น anti-debug / debugger) (pid %d)", p->pid);
+}` },
+
+ { name:"main() — setup", meta:"บรรทัด 568–610 — Phase 2", code:
+`int main(int argc, char *argv[])
+{
+    int opt;
+    out = stderr;
+    while ((opt = getopt(argc, argv, "+o:cf")) != -1) {
+        switch (opt) {
+        case 'o': out = fopen(optarg, "w");
+                  if (!out) { perror("fopen"); return 1; }
+                  break;
+        case 'c': opt_summary_only = 1; break;
+        case 'f': opt_follow = 1; break;
+        default:  usage(argv[0]);
+        }
+    }
+    if (optind >= argc) usage(argv[0]);
+
+    pid_t child = fork();
+    if (child < 0) { perror("fork"); return 1; }
+    if (child == 0) {
+        /* ---- tracee ---- */
+        ptrace(PTRACE_TRACEME, 0, NULL, NULL);
+        raise(SIGSTOP);                    /* หยุดรอ tracer ตั้ง option ก่อน */
+        execvp(argv[optind], &argv[optind]);
+        perror("execvp");
+        _exit(127);
+    }
+
+    /* ---- tracer ---- */
+    int status;
+    waitpid(child, &status, 0);            /* รอ SIGSTOP จาก child */
+    long opts = PTRACE_O_TRACESYSGOOD | PTRACE_O_EXITKILL;
+    if (opt_follow)
+        opts |= PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACECLONE;
+    ptrace(PTRACE_SETOPTIONS, child, NULL, opts);
+
+    struct proc *root = get_proc(child, 1);
+    root->started = root->primed = 1;
+    ptrace(PTRACE_SYSCALL, child, NULL, NULL);
+
+    for (;;) {
+        pid_t pid = waitpid(-1, &status, __WALL);
+        if (pid < 0) break;
+        struct proc *p = get_proc(pid, 0);
+        if (!p) continue;
+
+        if (WIFEXITED(status) || WIFSIGNALED(status)) {
+            // ... จัดการ process ที่จบ, พิมพ์ exit code, release_proc() ...
+            continue;
+        }
+        // ... แยก syscall-stop ออกจาก signal-stop / PTRACE_EVENT_* (fork, clone, vfork)
+        //     แล้วสลับเรียก on_entry() / on_exit_stop() ตามหัวข้อ 3.1 ...
+        ptrace(PTRACE_SYSCALL, pid, NULL, NULL);
+    }
+    print_summary(/* wall time */ 0);
+    return 0;
+}` },
+];
+
+function highlight(code){
+  return code.split('\n').map(line=>{
+    let l = line.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    l = l.replace(/(\/\*.*?\*\/|\/\/.*$)/g, m=>`<span class="tok-c">${m}</span>`);
+    l = l.replace(/"([^"\\]|\\.)*"/g, m=>`<span class="tok-s">${m}</span>`);
+    l = l.replace(/\b(static|const|struct|if|else|for|return|switch|case|default|void|int|long|char|size_t|double|break|continue|typedef|FILE|unsigned)\b/g,
+      m=>`<span class="tok-k">${m}</span>`);
+    l = l.replace(/#\w+/g, m=>`<span class="tok-p">${m}</span>`);
+    return l;
+  });
+}
+
+let codeIdx = 0;
+const codeSide = document.getElementById('codeSide');
+codeSections.forEach((s,i)=>{
+  const b=document.createElement('div');
+  b.className='code-tab'+(i===0?' active':'');
+  b.textContent=s.name;
+  b.onclick=()=>{ codeIdx=i; renderCode(); [...codeSide.children].forEach(c=>c.classList.remove('active')); b.classList.add('active'); };
+  codeSide.appendChild(b);
+});
+function renderCode(){
+  const s = codeSections[codeIdx];
+  document.getElementById('codeMeta').textContent = s.meta;
+  const lines = highlight(s.code);
+  document.getElementById('codeBody').innerHTML = lines.map((l,i)=>
+    `<div class="cl"><span class="ln">${i+1}</span><span class="code">${l||' '}</span></div>`).join('');
+}
+document.getElementById('swDemo').onclick=()=>{
+  document.getElementById('view-demo').style.display='block';
+  document.getElementById('view-code').classList.remove('show');
+  document.getElementById('swDemo').classList.add('active');
+  document.getElementById('swCode').classList.remove('active');
+};
+document.getElementById('swCode').onclick=()=>{
+  document.getElementById('view-demo').style.display='none';
+  document.getElementById('view-code').classList.add('show');
+  document.getElementById('swCode').classList.add('active');
+  document.getElementById('swDemo').classList.remove('active');
+  renderCode();
+};
+
+let current = "io", timer = null, running = false;
+const tabsEl = document.getElementById('tabs');
+Object.entries(tests).forEach(([key,t])=>{
+  const b=document.createElement('div');
+  b.className='tab'+(key===current?' active':'');
+  b.textContent=t.name;
+  b.title=t.desc;
+  b.onclick=()=>{ if(running) return; current=key; render(false);
+    [...tabsEl.children].forEach(c=>c.classList.remove('active')); b.classList.add('active'); };
+  tabsEl.appendChild(b);
+});
+
+function fmtPct(cats){
+  const max = Math.max(...cats.map(c=>c[1]),1);
+  return cats.map(([name,pct])=>`
+    <div class="bar-row">
+      <div class="bar-label">${name}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(pct/max*100).toFixed(0)}%"></div></div>
+      <div class="bar-pct">${pct.toFixed(1)}%</div>
+    </div>`).join('');
+}
+
+function renderSummary(t){
+  const tbl = document.getElementById('tbl');
+  let h = '<tr><th>syscall</th><th class="num">calls</th><th class="num">err</th><th class="num">% time</th></tr>';
+  t.table.forEach(r=>{ h+=`<tr><td>${r[0]}</td><td class="num">${r[1]}</td><td class="num">${r[2]||''}</td><td class="num">${r[3]}</td></tr>`; });
+  h+=`<tr><td><b>total</b></td><td class="num"><b>${t.totalCalls}</b></td><td class="num"><b>${t.totalErrors}</b></td><td class="num"></td></tr>`;
+  tbl.innerHTML = h;
+  document.getElementById('cats').innerHTML = fmtPct(t.cats);
+  document.getElementById('verdict').textContent = t.verdict;
+  document.getElementById('s-wall').textContent = t.wall;
+  document.getElementById('s-time').textContent = t.time;
+  document.getElementById('s-rate').textContent = t.rate;
+  const al = document.getElementById('alerts');
+  if(t.alerts){ al.innerHTML = t.alerts.map(a=>`<div class="alert-item">${a}</div>`).join(''); }
+  else{ al.innerHTML = '<div class="no-alert">ไม่พบ</div>'; }
+}
+
+function render(animate){
+  const t = tests[current];
+  const term = document.getElementById('term');
+  term.innerHTML = '';
+  document.getElementById('summary').classList.remove('show');
+  clearTimeout(timer);
+  if(!animate){
+    term.innerHTML = '<span class="prompt">$</span> กด "รัน tracer" เพื่อเริ่ม trace <span class="cursor"></span>';
+    return;
+  }
+  running = true;
+  let i = 0;
+  term.innerHTML = `<div class="l prompt">$ ./tracer ${current==='forkf'?'-f ':''}./${t.name.replace(' -f','')}</div>`;
+  function step(){
+    if(i >= t.log.length){
+      running = false;
+      renderSummary(t);
+      document.getElementById('summary').classList.add('show');
+      document.getElementById('summary').scrollIntoView({behavior:'smooth', block:'nearest'});
+      return;
+    }
+    const [text, cls] = t.log[i];
+    const div = document.createElement('div');
+    div.className = 'l' + (cls?(' '+cls):'');
+    div.textContent = text;
+    term.appendChild(div);
+    i++;
+    timer = setTimeout(step, cls===D ? 220 : 90);
+  }
+  step();
+}
+
+document.getElementById('runBtn').onclick = ()=> render(true);
+document.getElementById('skipBtn').onclick = ()=>{
+  clearTimeout(timer); running=false;
+  const t = tests[current];
+  renderSummary(t);
+  document.getElementById('summary').classList.add('show');
+  const term=document.getElementById('term');
+  term.innerHTML = `<div class="l prompt">$ ./tracer ${current==='forkf'?'-f ':''}./${t.name.replace(' -f','')}</div>` +
+    t.log.map(([text,cls])=>`<div class="l${cls?(' '+cls):''}">${text.replace(/</g,'&lt;')}</div>`).join('');
+};
+
+render(false);
+</script>
+</body>
+</html>
